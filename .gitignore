@@ -1,0 +1,22 @@
+# Environnements virtuels
+.venv/
+.venv-1/
+.venv-2/
+
+# Python
+__pycache__/
+*.pyc
+
+# Fichiers Excel temporaires / verrous
+~$*.xlsx
+
+# Sorties générées (contiennent les noms/titres extraits des documents du
+# corpus, données personnelles d'autres étudiant·e·s) : non versionnées
+# par défaut.
+statistiques_structure_corpus.xlsx
+grille_observation_corpus.xlsx
+sortie_terminal.txt
+
+# Le corpus lui-même (mémoires/thèses de tiers) n'est pas dans ce dossier,
+# mais on l'exclut explicitement par précaution s'il y était copié un jour.
+corpus/
