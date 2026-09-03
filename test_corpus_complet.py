@@ -6,15 +6,21 @@ Auteur : Sawadogo Rimalguedo Rahimata
 Date : 30/08/2026
 """
 
+import sys
+import io
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
 import os
 import re
 import pandas as pd
 from pathlib import Path
+from transformers import AutoTokenizer
 
 from inspection import extraire_texte, detecter_sommaire, detecter_lignes_repete
 from extraire_titre_sommaire import extraire_titres_sommaire, filtrer_bandeau, normaliser_texte, correspond_au_bandeau
 from localiser_titres_corps import localiser_titres_dans_corps
-from decouper_segments import decouper_en_segments
+from decouper_segments import decouper_en_segments, compteur_taille_tokenizer
 
 # -----------------------------------------------------------------------------
 # CONFIGURATION
@@ -24,12 +30,19 @@ DOSSIER_CORPUS = r"C:\Users\1\Documents\MASTER_SOUTENANCE\corpus"
 FICHIER_SORTIE = "statistiques_structure_corpus.xlsx"
 DOSSIER_CORPUS2 = r"C:\Users\1\Documents\MASTER_SOUTENANCE\corpus\corpus2"
 
+# Paramètres de découpage validés sur les 3 documents de référence
+# (SIMPORE, SERE, 08-memoire) dans verifier_decoupage_tokens.py.
+NOM_MODELE = "dangvantuan/sentence-camembert-large"
+FENETRE_REELLE_MODELE = 512
+TAILLE_MAX_CHUNK_TOKENS = 400
+CHEVAUCHEMENT_TOKENS = 40
+
 
 # -----------------------------------------------------------------------------
 # FONCTION D'ANALYSE D'UN DOCUMENT
 # -----------------------------------------------------------------------------
 
-def analyser_document(chemin_pdf, debug=False):
+def analyser_document(chemin_pdf, tokenizer, compteur_taille, debug=False):
     """
     Analyse un document : extrait le sommaire, filtre les bandeaux,
     parse les titres, et retourne un dictionnaire de statistiques.
@@ -69,6 +82,9 @@ def analyser_document(chemin_pdf, debug=False):
             resultat['taille_chunk_min'] = 0
             resultat['taille_chunk_max'] = 0
             resultat['taille_chunk_moyenne'] = 0.0
+            resultat['taille_chunk_tokens_max'] = 0
+            resultat['nb_chunks_depassement_512'] = 0
+            resultat['nb_chunks_depassement_512_non_legitime'] = 0
             return resultat
 
         # 3. Détection des lignes fréquentes
@@ -130,12 +146,22 @@ def analyser_document(chemin_pdf, debug=False):
         resultat['nb_titres_localises'] = nb_localises
         resultat['taux_localisation'] = round(nb_localises / len(titres), 3) if titres else 0.0
 
-        # 8. Découpage en chunks
-        chunks = decouper_en_segments(texte_complet, titres, liste_bandeaux=liste_bandeaux)
+        # 8. Découpage en chunks (paramètres token-based validés sur les
+        # 3 documents de référence : voir verifier_decoupage_tokens.py)
+        chunks = decouper_en_segments(
+            texte_complet, titres,
+            taille_max_chunk=TAILLE_MAX_CHUNK_TOKENS,
+            chevauchement=CHEVAUCHEMENT_TOKENS,
+            compteur_taille=compteur_taille,
+            liste_bandeaux=liste_bandeaux,
+        )
         sections_chunks = {}
         for c in chunks:
             sections_chunks.setdefault(c['position_debut'], []).append(c)
         tailles_mots = [len(c['texte'].split()) for c in chunks]
+        tailles_tokens = [len(tokenizer.encode(c['texte'], add_special_tokens=True)) for c in chunks]
+        depassements = [c for c, t in zip(chunks, tailles_tokens) if t > FENETRE_REELLE_MODELE]
+        depassements_non_legitimes = [c for c in depassements if not c['legitime']]
 
         resultat['nb_sections_chunks'] = len(sections_chunks)
         resultat['nb_chunks'] = len(chunks)
@@ -145,6 +171,9 @@ def analyser_document(chemin_pdf, debug=False):
         resultat['taille_chunk_min'] = min(tailles_mots) if tailles_mots else 0
         resultat['taille_chunk_max'] = max(tailles_mots) if tailles_mots else 0
         resultat['taille_chunk_moyenne'] = round(sum(tailles_mots) / len(tailles_mots), 1) if tailles_mots else 0.0
+        resultat['taille_chunk_tokens_max'] = max(tailles_tokens) if tailles_tokens else 0
+        resultat['nb_chunks_depassement_512'] = len(depassements)
+        resultat['nb_chunks_depassement_512_non_legitime'] = len(depassements_non_legitimes)
 
     except Exception as e:
         resultat['erreur'] = str(e)
@@ -157,7 +186,9 @@ def analyser_document(chemin_pdf, debug=False):
                       'nb_titres_localises', 'taux_localisation',
                       'nb_sections_chunks', 'nb_chunks', 'nb_sections_multi_chunks',
                       'nb_chunks_suspects', 'nb_chunks_vides',
-                      'taille_chunk_min', 'taille_chunk_max', 'taille_chunk_moyenne']:
+                      'taille_chunk_min', 'taille_chunk_max', 'taille_chunk_moyenne',
+                      'taille_chunk_tokens_max', 'nb_chunks_depassement_512',
+                      'nb_chunks_depassement_512_non_legitime']:
             resultat.setdefault(champ, None)
 
     return resultat
@@ -172,12 +203,15 @@ def main():
     fichiers_pdf = sorted(dossier.glob('**/*.pdf'))
 
     print(f"📄 {len(fichiers_pdf)} PDF trouvés")
+    print(f"Chargement du tokenizer ({NOM_MODELE})...")
+    tokenizer = AutoTokenizer.from_pretrained(NOM_MODELE)
+    compteur_taille = compteur_taille_tokenizer(tokenizer)
     print("=" * 60)
 
     resultats = []
     for i, chemin_pdf in enumerate(fichiers_pdf, 1):
         print(f"[{i}/{len(fichiers_pdf)}] Analyse de {chemin_pdf.name}...")
-        resultat = analyser_document(chemin_pdf)
+        resultat = analyser_document(chemin_pdf, tokenizer, compteur_taille)
         resultats.append(resultat)
 
         if resultat['erreur']:
@@ -188,7 +222,8 @@ def main():
             print(f"   📊 {resultat['nb_titres']} titres, {resultat['nb_chapitres']} chapitres, "
                   f"profondeur max {resultat['profondeur_max']}, localisation {taux_str}, "
                   f"{resultat.get('nb_chunks')} chunks ({resultat.get('nb_sections_multi_chunks')} redécoupés, "
-                  f"{resultat.get('nb_chunks_suspects')} suspects)")
+                  f"{resultat.get('nb_chunks_suspects')} suspects, "
+                  f"{resultat.get('nb_chunks_depassement_512')} > 512 tokens)")
 
     print("=" * 60)
 
@@ -205,6 +240,8 @@ def main():
         'nb_sections_chunks', 'nb_chunks', 'nb_sections_multi_chunks',
         'nb_chunks_suspects', 'nb_chunks_vides',
         'taille_chunk_min', 'taille_chunk_max', 'taille_chunk_moyenne',
+        'taille_chunk_tokens_max', 'nb_chunks_depassement_512',
+        'nb_chunks_depassement_512_non_legitime',
         'schemas_titres', 'sommaire_present', 'bandeau_present', 'erreur'
     ]
     df = df[[c for c in colonnes_ordre if c in df.columns]]
@@ -276,6 +313,12 @@ def main():
     print(f"Taille de chunk (mots) : min={df['taille_chunk_min'].min()}, max={df['taille_chunk_max'].max()}, "
           f"moyenne des moyennes={df['taille_chunk_moyenne'].mean():.1f}")
 
+    print(f"\n--- DÉPASSEMENT DE LA FENÊTRE RÉELLE ({FENETRE_REELLE_MODELE} TOKENS) ---")
+    print(f"Taille de chunk (tokens) max observée : {df['taille_chunk_tokens_max'].max()}")
+    print(f"Chunks > {FENETRE_REELLE_MODELE} tokens : {df['nb_chunks_depassement_512'].sum()} au total, "
+          f"dont {df['nb_chunks_depassement_512_non_legitime'].sum()} legitime=False, "
+          f"sur {(df['nb_chunks_depassement_512'] > 0).sum()}/{len(df)} documents")
+
     documents_atypiques = df[
         (df['profondeur_max'] < 3) |
         (df['nb_titres'] < 20) |
@@ -284,6 +327,7 @@ def main():
         (df['taux_localisation'] < 0.70) |
         (df['nb_chunks_vides'] > 0) |
         (df['nb_chunks_suspects'] > 5) |
+        (df['nb_chunks_depassement_512_non_legitime'] > 0) |
         (df['erreur'].notna())
     ]
 
@@ -305,6 +349,9 @@ def main():
                 raisons.append(f"{row['nb_chunks_vides']} chunk(s) vide(s)")
             if row.get('nb_chunks_suspects') and row['nb_chunks_suspects'] > 5:
                 raisons.append(f"{row['nb_chunks_suspects']} chunks suspects (<10 mots)")
+            if row.get('nb_chunks_depassement_512_non_legitime'):
+                raisons.append(f"{row['nb_chunks_depassement_512_non_legitime']} chunk(s) > "
+                                f"{FENETRE_REELLE_MODELE} tokens (legitime=False)")
             if row.get('erreur'):
                 raisons.append(f"erreur : {row['erreur'][:50]}")
             print(f"   • {row['fichier']} : {', '.join(raisons)}")
