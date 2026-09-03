@@ -21,16 +21,22 @@ from localiser_titres_corps import _aplatir
 # PARAMÈTRES PAR DÉFAUT
 # -----------------------------------------------------------------------------
 
-# Valeur INDICATIVE en nombre de MOTS (pas de tokens : aucun tokenizer n'est
-# encore branché à ce stade du pipeline). À recaler une fois le modèle
-# d'embedding choisi (ex. sentence-camembert-large) et son tokenizer connus —
-# un mot français fait grossièrement 1,3 à 1,8 token selon le modèle, donc
-# 350 mots correspond très approximativement à 500-600 tokens.
+# Valeur par défaut en nombre de MOTS, utilisée quand aucun `compteur_taille`
+# n'est fourni à decouper_en_segments() (voir plus bas). Un simple compte de
+# mots n'est qu'une approximation grossière de la fenêtre d'un modèle
+# d'embedding : mesuré sur le corpus de référence, le ratio réel varie de
+# 1,3 à 2 tokens par mot selon le vocabulaire du document (nettement plus
+# haut sur un texte à vocabulaire technique/médical dense que sur un texte
+# courant). Pour un découpage fiable vis-à-vis de la fenêtre RÉELLE d'un
+# modèle donné, passer un `compteur_taille` basé sur son tokenizer (voir
+# `compteur_taille_tokenizer` ci-dessous) plutôt que de se fier à cette
+# valeur par défaut.
 TAILLE_MAX_CHUNK_DEFAUT = 350
 
 # Chevauchement par défaut entre deux chunks consécutifs d'une même section,
-# en nombre de mots pris en fin du chunk précédent.
-CHEVAUCHEMENT_MOTS_DEFAUT = 40
+# dans la même unité que taille_max_chunk (mots par défaut, tokens si un
+# compteur_taille basé sur un tokenizer est utilisé).
+CHEVAUCHEMENT_DEFAUT = 40
 
 # En dessous de ce nombre de mots, une section qui ne produit qu'UN seul
 # chunk est considérée "titre seul" (un titre immédiatement suivi d'un
@@ -38,6 +44,29 @@ CHEVAUCHEMENT_MOTS_DEFAUT = 40
 # premier chunk de la section suivante plutôt que publiée comme chunk à
 # part entière quasi vide.
 SEUIL_TITRE_SEUL_MOTS = 10
+
+
+def compteur_taille_mots(texte):
+    """Compteur par défaut : nombre de mots (`str.split()`)."""
+    return len(texte.split())
+
+
+def compteur_taille_tokenizer(tokenizer):
+    """
+    Construit un compteur de taille basé sur le tokenizer d'un modèle
+    d'embedding donné (ex: `SentenceTransformer(...).tokenizer` pour
+    sentence-camembert-large ou BGE-M3), à passer en `compteur_taille` à
+    decouper_en_segments() pour que le découpage respecte la fenêtre RÉELLE
+    du modèle cible plutôt qu'une approximation en nombre de mots.
+
+    Changer de modèle d'embedding plus tard ne demande donc que de
+    reconstruire ce compteur avec le nouveau tokenizer — la logique de
+    découpage elle-même (decouper_en_segments et les fonctions internes de
+    ce module) n'a pas besoin d'être modifiée.
+    """
+    def compter(texte):
+        return len(tokenizer.encode(texte, add_special_tokens=False))
+    return compter
 
 
 # -----------------------------------------------------------------------------
@@ -122,16 +151,18 @@ def _decouper_en_phrases(texte):
     return [p.strip() for p in phrases if p.strip()]
 
 
-def _decouper_paragraphe_en_sous_unites(paragraphe, taille_max_chunk):
+def _decouper_paragraphe_en_sous_unites(paragraphe, taille_max_chunk, compteur_taille):
     """
-    Si un paragraphe à lui seul dépasse taille_max_chunk, le redécoupe par
-    phrases. Si une "phrase" individuelle dépasse elle-même la limite (texte
-    sans ponctuation de fin de phrase régulière sur une longue portion —
-    ex: une transcription d'entretien qualitatif, un tableau retranscrit en
-    texte brut), dernier recours : coupe brute par mots pour CETTE phrase
-    uniquement, le reste du paragraphe continuant d'être découpé par phrases.
+    Si un paragraphe à lui seul dépasse taille_max_chunk (mesuré par
+    compteur_taille), le redécoupe par phrases. Si une "phrase" individuelle
+    dépasse elle-même la limite (texte sans ponctuation de fin de phrase
+    régulière sur une longue portion — ex: une transcription d'entretien
+    qualitatif, un tableau retranscrit en texte brut), dernier recours :
+    coupe brute mot par mot pour CETTE phrase uniquement (la taille de
+    chaque morceau est ajustée via compteur_taille, pas juste comptée en
+    mots), le reste du paragraphe continuant d'être découpé par phrases.
     """
-    if len(paragraphe.split()) <= taille_max_chunk:
+    if compteur_taille(paragraphe) <= taille_max_chunk:
         return [paragraphe]
 
     phrases = _decouper_en_phrases(paragraphe)
@@ -140,95 +171,129 @@ def _decouper_paragraphe_en_sous_unites(paragraphe, taille_max_chunk):
 
     sous_unites = []
     courant = []
-    n_mots_courant = 0
+    taille_courante = 0
     for phrase in phrases:
-        n = len(phrase.split())
+        n = compteur_taille(phrase)
         if n > taille_max_chunk:
             if courant:
                 sous_unites.append(' '.join(courant))
-                courant, n_mots_courant = [], 0
+                courant, taille_courante = [], 0
             mots = phrase.split()
-            sous_unites.extend(
-                ' '.join(mots[i:i + taille_max_chunk])
-                for i in range(0, len(mots), taille_max_chunk)
-            )
+            debut = 0
+            while debut < len(mots):
+                fin = len(mots)
+                while fin > debut + 1 and compteur_taille(' '.join(mots[debut:fin])) > taille_max_chunk:
+                    fin -= 1
+                sous_unites.append(' '.join(mots[debut:fin]))
+                debut = fin
             continue
-        if courant and n_mots_courant + n > taille_max_chunk:
+        if courant and taille_courante + n > taille_max_chunk:
             sous_unites.append(' '.join(courant))
-            courant, n_mots_courant = [], 0
+            courant, taille_courante = [], 0
         courant.append(phrase)
-        n_mots_courant += n
+        taille_courante += n
     if courant:
         sous_unites.append(' '.join(courant))
     return sous_unites
 
 
-def _regrouper_paragraphes_en_chunks(paragraphes, taille_max_chunk):
+def _regrouper_paragraphes_en_chunks(paragraphes, taille_max_chunk, compteur_taille):
     """
     Assemble les paragraphes (ou leurs sous-unités si un paragraphe dépasse
     à lui seul la limite) en chunks, en coupant à la frontière de paragraphe
-    (ou de phrase, en dernier recours) la plus proche de taille_max_chunk.
+    (ou de phrase, en dernier recours) la plus proche de taille_max_chunk,
+    telle que mesurée par compteur_taille.
     """
     unites = []
     for p in paragraphes:
-        unites.extend(_decouper_paragraphe_en_sous_unites(p, taille_max_chunk))
+        unites.extend(_decouper_paragraphe_en_sous_unites(p, taille_max_chunk, compteur_taille))
+
+    # Taille plancher en dessous de laquelle un chunk en cours de
+    # constitution n'est jamais isolé seul (ex: un titre de sous-section
+    # suivi d'un paragraphe déjà proche du budget) : on absorbe l'unité
+    # suivante quitte à dépasser légèrement taille_max_chunk, plutôt que de
+    # publier un fragment quasi vide comme chunk à part entière. Comme
+    # chaque unité est déjà bornée à taille_max_chunk par
+    # _decouper_paragraphe_en_sous_unites, le dépassement induit reste
+    # limité (au plus une unité de plus que le budget).
+    taille_plancher = max(1, taille_max_chunk // 10)
 
     chunks = []
     courant = []
-    n_mots_courant = 0
+    taille_courante = 0
     for u in unites:
-        n = len(u.split())
-        if courant and n_mots_courant + n > taille_max_chunk:
+        n = compteur_taille(u)
+        if courant and taille_courante + n > taille_max_chunk and taille_courante >= taille_plancher:
             chunks.append('\n\n'.join(courant))
-            courant, n_mots_courant = [], 0
+            courant, taille_courante = [], 0
         courant.append(u)
-        n_mots_courant += n
+        taille_courante += n
     if courant:
         chunks.append('\n\n'.join(courant))
     return chunks
 
 
-def _appliquer_chevauchement(chunks, chevauchement_mots):
+def _appliquer_chevauchement(chunks, chevauchement, compteur_taille):
     """
     Préfixe chaque chunk (sauf le premier) avec un rappel du chunk
     précédent, pour ne pas perdre le contexte à la frontière de coupe. Le
     rappel démarre toujours à une frontière de phrase (jamais une phrase
-    amputée de son début), quitte à dépasser légèrement chevauchement_mots.
+    amputée de son début), quitte à dépasser légèrement chevauchement
+    (mesuré par compteur_taille).
     """
-    if len(chunks) <= 1 or chevauchement_mots <= 0:
+    if len(chunks) <= 1 or chevauchement <= 0:
         return chunks
 
     resultat = [chunks[0]]
     for i in range(1, len(chunks)):
-        rappel = _rappel_par_phrases(chunks[i - 1], chevauchement_mots)
+        rappel = _rappel_par_phrases(chunks[i - 1], chevauchement, compteur_taille)
         resultat.append(rappel + ' ' + chunks[i])
     return resultat
 
 
-def _rappel_par_phrases(texte, chevauchement_mots):
+def _rappel_par_phrases(texte, chevauchement, compteur_taille):
     """
     Construit le rappel de chevauchement à partir des dernières phrases
     COMPLÈTES du texte précédent, en cumulant depuis la fin jusqu'à
-    atteindre au moins chevauchement_mots mots (on dépasse légèrement la
-    cible plutôt que de couper une phrase en deux). Si aucune frontière de
-    phrase n'est détectable (ex: liste de références sans ponctuation
-    forte régulière), on retombe sur une fenêtre brute de mots.
+    atteindre au moins chevauchement (selon compteur_taille) — on dépasse
+    légèrement la cible plutôt que de couper une phrase en deux. Si aucune
+    frontière de phrase n'est détectable (ex: liste de références sans
+    ponctuation forte régulière), on retombe sur une fenêtre brute de mots.
     """
     phrases = _decouper_en_phrases(texte)
     if len(phrases) <= 1:
         mots = texte.split()
-        if len(mots) <= chevauchement_mots:
+        if compteur_taille(texte) <= chevauchement:
             return texte
-        return ' '.join(mots[-chevauchement_mots:])
+        fin = len(mots)
+        while fin > 1 and compteur_taille(' '.join(mots[-fin:])) > chevauchement:
+            fin -= 1
+        return ' '.join(mots[-fin:])
 
     choisies = []
-    n_mots = 0
+    taille = 0
     for phrase in reversed(phrases):
         choisies.insert(0, phrase)
-        n_mots += len(phrase.split())
-        if n_mots >= chevauchement_mots:
+        taille += compteur_taille(phrase)
+        if taille >= chevauchement:
             break
-    return ' '.join(choisies)
+    rappel = ' '.join(choisies)
+
+    # Cas limite : certains contenus (tableaux de citations, définitions
+    # denses) contiennent des phrases individuelles très longues. Si la
+    # dernière phrase à elle seule fait déjà dépasser largement la cible
+    # (plus du double), l'accumulation par phrases entières produirait un
+    # chevauchement disproportionné. On retombe alors sur une fenêtre de
+    # mots bornée à la cible, au prix d'un début de phrase éventuellement
+    # incomplet pour ce cas précis seulement.
+    if compteur_taille(rappel) > chevauchement * 2:
+        mots = texte.split()
+        fin = len(mots)
+        while fin > 1 and compteur_taille(' '.join(mots[-fin:])) > chevauchement:
+            fin -= 1
+        return ' '.join(mots[-fin:])
+
+    return rappel
 
 
 # -----------------------------------------------------------------------------
@@ -239,7 +304,8 @@ def decouper_en_segments(
     texte_complet,
     titres_localises,
     taille_max_chunk=TAILLE_MAX_CHUNK_DEFAUT,
-    chevauchement_mots=CHEVAUCHEMENT_MOTS_DEFAUT,
+    chevauchement=CHEVAUCHEMENT_DEFAUT,
+    compteur_taille=None,
     liste_bandeaux=None,
     debug=False,
 ):
@@ -249,11 +315,19 @@ def decouper_en_segments(
     texte_complet : sortie de inspection.extraire_texte().
     titres_localises : sortie de localiser_titres_corps.localiser_titres_dans_corps()
         (liste de titres enrichis de position_debut/position_fin/localise).
-    taille_max_chunk : taille cible maximale d'un chunk, en nombre de MOTS
-        (voir TAILLE_MAX_CHUNK_DEFAUT — valeur indicative, à recaler une fois
-        le tokenizer du modèle d'embedding connu).
-    chevauchement_mots : nombre de mots de recouvrement entre deux chunks
-        consécutifs d'une même section.
+    taille_max_chunk : taille cible maximale d'un chunk, dans l'unité de
+        compteur_taille (mots par défaut — voir TAILLE_MAX_CHUNK_DEFAUT ;
+        tokens si compteur_taille est basé sur un tokenizer).
+    chevauchement : recouvrement entre deux chunks consécutifs d'une même
+        section, dans la même unité que taille_max_chunk.
+    compteur_taille : fonction texte -> taille utilisée pour toutes les
+        décisions de découpage. Par défaut (None), compte les mots
+        (compteur_taille_mots) — une approximation grossière. Pour un
+        découpage fiable vis-à-vis de la fenêtre réelle d'un modèle
+        d'embedding donné, passer compteur_taille_tokenizer(tokenizer) avec
+        le tokenizer de ce modèle (voir ce module). Changer de modèle ne
+        demande alors que de reconstruire ce compteur, sans toucher au
+        reste de la logique de découpage.
     liste_bandeaux : liste de bandeaux déjà détectés (detecter_lignes_repete)
         à réutiliser ; si None, recalculée ici.
 
@@ -273,6 +347,9 @@ def decouper_en_segments(
         {texte, cle_unique_section, niveau, legitime, chapitre_parent,
          position_debut, position_fin, numero_chunk_dans_section}
     """
+    if compteur_taille is None:
+        compteur_taille = compteur_taille_mots
+
     toutes_lignes = _aplatir(texte_complet)
     n_lignes = len(toutes_lignes)
 
@@ -294,7 +371,12 @@ def decouper_en_segments(
     titres_valides = [t for t in titres_localises if t.get('localise')]
 
     # -----------------------------------------------------------------
-    # Étape 1 : produire les chunks de chaque section, indépendamment.
+    # Étape 1 : extraire les paragraphes nettoyés de chaque section, SANS
+    # encore les découper en chunks — une section "titre seul" doit pouvoir
+    # voir ses paragraphes rejoints à ceux de la section suivante AVANT le
+    # découpage en chunks, pour que taille_max_chunk reste toujours respecté
+    # (le concaténer après coup, une fois les chunks déjà formés, pourrait
+    # produire un chunk sans plus aucune limite de taille).
     # -----------------------------------------------------------------
     sections = []
     for titre in titres_valides:
@@ -317,52 +399,62 @@ def decouper_en_segments(
                       f"(g{debut}-g{fin_bornee}) : rien après nettoyage, ignorée")
             continue
 
-        chunks_texte = _regrouper_paragraphes_en_chunks(paragraphes, taille_max_chunk)
-        chunks_texte = _appliquer_chevauchement(chunks_texte, chevauchement_mots)
-
         sections.append({
             'titre': titre,
             'debut': debut,
             'fin': fin,
-            'chunks_texte': chunks_texte,
+            'paragraphes': paragraphes,
         })
 
-        if debug:
-            print(f"[OK] section '{titre.get('cle_unique')}' (g{debut}-g{fin_bornee}) : "
-                  f"{len(paragraphes)} paragraphe(s) -> {len(chunks_texte)} chunk(s)")
-
     # -----------------------------------------------------------------
-    # Étape 2 : fusionner en cascade les sections "titre seul" en tête de
-    # la prochaine section non vide.
+    # Étape 2 : découper en chunks section par section, en fusionnant en
+    # cascade les paragraphes des sections "titre seul" (un seul chunk
+    # produit, sous SEUIL_TITRE_SEUL_MOTS mots — typiquement un titre
+    # immédiatement suivi d'un sous-titre, sans texte propre) à ceux de la
+    # prochaine section non vide AVANT découpage, plutôt que de publier un
+    # chunk quasi vide à part entière.
     # -----------------------------------------------------------------
     chunks_resultat = []
-    textes_titres_seuls_en_attente = []
+    paragraphes_en_attente = []
     debut_fusion_en_attente = None
 
     for section in sections:
-        chunks_texte = list(section['chunks_texte'])
+        paragraphes = section['paragraphes']
+
+        # "Titre seul" ou non : décidé sur les paragraphes PROPRES de la
+        # section (sans le préfixe en attente), pour que ce ne soit pas
+        # l'accumulation de titres précédents qui la fasse artificiellement
+        # sortir du lot.
+        chunks_propres = _regrouper_paragraphes_en_chunks(paragraphes, taille_max_chunk, compteur_taille)
         est_titre_seul = (
-            len(chunks_texte) == 1
-            and len(chunks_texte[0].split()) < SEUIL_TITRE_SEUL_MOTS
+            len(chunks_propres) == 1
+            and len(chunks_propres[0].split()) < SEUIL_TITRE_SEUL_MOTS
         )
 
         if est_titre_seul:
             if debut_fusion_en_attente is None:
                 debut_fusion_en_attente = section['debut']
-            textes_titres_seuls_en_attente.append(chunks_texte[0])
+            paragraphes_en_attente.extend(paragraphes)
             if debug:
                 print(f"[FUSION] '{section['titre'].get('cle_unique')}' "
-                      f"({len(chunks_texte[0].split())} mots) mis en attente")
+                      f"({len(chunks_propres[0].split())} mots) mis en attente")
             continue
 
-        if textes_titres_seuls_en_attente:
-            prefixe = '\n\n'.join(textes_titres_seuls_en_attente)
-            chunks_texte[0] = prefixe + '\n\n' + chunks_texte[0]
+        if paragraphes_en_attente:
+            paragraphes_effectifs = paragraphes_en_attente + paragraphes
             debut_effectif = debut_fusion_en_attente
-            textes_titres_seuls_en_attente = []
+            paragraphes_en_attente = []
             debut_fusion_en_attente = None
+            chunks_texte = _regrouper_paragraphes_en_chunks(paragraphes_effectifs, taille_max_chunk, compteur_taille)
         else:
             debut_effectif = section['debut']
+            chunks_texte = chunks_propres
+
+        chunks_texte = _appliquer_chevauchement(chunks_texte, chevauchement, compteur_taille)
+
+        if debug:
+            print(f"[OK] section '{section['titre'].get('cle_unique')}' : "
+                  f"{len(paragraphes)} paragraphe(s) -> {len(chunks_texte)} chunk(s)")
 
         titre = section['titre']
         for idx, texte_chunk in enumerate(chunks_texte):
@@ -383,19 +475,23 @@ def decouper_en_segments(
 
     # Cas limite : si le document se termine sur un ou plusieurs titres
     # seuls sans aucune section non vide après eux pour les absorber, on les
-    # publie tels quels plutôt que de perdre l'information.
-    if textes_titres_seuls_en_attente:
+    # publie tels quels (découpés/bornés normalement) plutôt que de perdre
+    # l'information.
+    if paragraphes_en_attente:
         section_finale = sections[-1] if sections else None
         titre = section_finale['titre'] if section_finale else {}
-        chunks_resultat.append({
-            'texte': '\n\n'.join(textes_titres_seuls_en_attente),
-            'cle_unique_section': titre.get('cle_unique'),
-            'niveau': titre.get('niveau'),
-            'legitime': titre.get('legitime'),
-            'chapitre_parent': titre.get('chapitre_parent'),
-            'position_debut': debut_fusion_en_attente,
-            'position_fin': section_finale['fin'] if section_finale else None,
-            'numero_chunk_dans_section': 0,
-        })
+        chunks_texte = _regrouper_paragraphes_en_chunks(paragraphes_en_attente, taille_max_chunk, compteur_taille)
+        chunks_texte = _appliquer_chevauchement(chunks_texte, chevauchement, compteur_taille)
+        for idx, texte_chunk in enumerate(chunks_texte):
+            chunks_resultat.append({
+                'texte': texte_chunk,
+                'cle_unique_section': titre.get('cle_unique'),
+                'niveau': titre.get('niveau'),
+                'legitime': titre.get('legitime'),
+                'chapitre_parent': titre.get('chapitre_parent'),
+                'position_debut': debut_fusion_en_attente if idx == 0 else None,
+                'position_fin': section_finale['fin'] if section_finale else None,
+                'numero_chunk_dans_section': idx,
+            })
 
     return chunks_resultat

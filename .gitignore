@@ -2,6 +2,7 @@
 .venv/
 .venv-1/
 .venv-2/
+.venv-embed/
 
 # Python
 __pycache__/
@@ -20,3 +21,8 @@ sortie_terminal.txt
 # Le corpus lui-même (mémoires/thèses de tiers) n'est pas dans ce dossier,
 # mais on l'exclut explicitement par précaution s'il y était copié un jour.
 corpus/
+
+# Artefacts binaires générés par les scripts de test des embeddings
+# (vecteurs, chunks picklés) : régénérables, pas de source à versionner.
+vecteurs_ref.npy
+chunks_ref.pkl
