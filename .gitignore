@@ -32,3 +32,9 @@ chunks_ref.pkl
 vecteurs_corpus.npy
 metadonnees_corpus.parquet
 checkpoint_encodage.json
+
+# Voie lexicale TF-IDF (matrice, vocabulaire et correspondance dérivés du
+# texte des 63 documents de tiers).
+tfidf_corpus.npz
+vocabulaire_tfidf.txt
+correspondance_tfidf.parquet
