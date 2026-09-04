@@ -26,3 +26,9 @@ corpus/
 # (vecteurs, chunks picklés) : régénérables, pas de source à versionner.
 vecteurs_ref.npy
 chunks_ref.pkl
+
+# Encodage complet du corpus (vecteurs + métadonnées contenant le texte des
+# chunks des 63 documents, donc des tiers) et son checkpoint de reprise.
+vecteurs_corpus.npy
+metadonnees_corpus.parquet
+checkpoint_encodage.json
