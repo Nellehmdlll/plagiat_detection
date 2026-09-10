@@ -38,3 +38,10 @@ checkpoint_encodage.json
 tfidf_corpus.npz
 vocabulaire_tfidf.txt
 correspondance_tfidf.parquet
+
+# Rapports de detection generes (extraits du texte de tiers).
+rapport_detection_*.csv
+
+# Jeu de test etiquete (contient le texte des chunks du corpus de tiers).
+jeu_test_etiquete.parquet
+sources_bc_a_paraphraser.parquet

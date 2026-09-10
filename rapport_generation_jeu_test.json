@@ -1,0 +1,19 @@
+{
+  "date_generation": "2026-09-10",
+  "modele_generation_bc": "Claude Sonnet 5 (Anthropic), via Claude Code",
+  "prompt_categorie_b": "Reformule ce texte avec un changement modéré : remplace 30 à 50% des mots par des synonymes ou tournures différentes, réordonne au moins une proposition ou change la structure d'au moins une phrase, mais reste plus proche de l'original que ne le serait une paraphrase complète (catégorie C). Le texte doit rester clairement reconnaissable comme dérivé de l'original par sa structure générale, tout en montrant un effort de reformulation net, pas de simples synonymes isolés.",
+  "prompt_categorie_c": "reformule entièrement ce texte en gardant exactement le même sens, change le vocabulaire et la structure des phrases autant que possible",
+  "seuil_tfidf_categorie_d": 0.05,
+  "note_noyau_calibrage": "L'instruction mentionne 15 paires pour le noyau de calibrage existant, mais calibrer_alpha_fusion.py en contient reellement 10 (documente et deja valide) - reutilisees telles quelles, aucune paire manuelle supplementaire fabriquee pour ne pas contredire la consigne 'deja fait, ne pas refaire'.",
+  "comptes_par_categorie": {
+    "D": 40,
+    "C": 40,
+    "E": 30,
+    "B": 30,
+    "A": 25
+  },
+  "total_paires_construites_ici": 165,
+  "total_avec_noyau_calibrage": 175,
+  "paires_bc_en_attente_generation": 0,
+  "note_bug_corrige": "Une paire A (id_paire=75, section geologique tres degradee par l'extraction PDF, mots colles sans espaces) a produit initialement texte_1==texte_2 : ni le dictionnaire de synonymes ni le repli ''et'' -> ''ainsi que'' ne trouvaient de mot exploitable dans ce texte tres mangle. Corrige manuellement (substitution de deux mots restes lisibles) et un dernier repli (insertion d'espace avant ponctuation) ajoute a creer_variante_quasi_identique() pour empecher toute recurrence silencieuse."
+}
