@@ -45,3 +45,8 @@ rapport_detection_*.csv
 # Jeu de test etiquete (contient le texte des chunks du corpus de tiers).
 jeu_test_etiquete.parquet
 sources_bc_a_paraphraser.parquet
+
+# Scores bruts par paire (reference des documents sources par nom).
+# grille_alpha_seuil.csv et courbe_precision_rappel.csv sont de purs
+# resultats numeriques agreges : versionnes normalement.
+scores_bruts_jeu_test.csv

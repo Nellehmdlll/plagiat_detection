@@ -31,7 +31,11 @@ A executer avec l'environnement .venv-embed :
 import sys
 import io
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if __name__ == "__main__":
+    # ne reconfigure stdout que lors d'une execution directe - sinon un
+    # import de ce module (ex. pour reutiliser PAIRES) re-enveloppe un
+    # stdout deja enveloppe et ferme le flux du process appelant.
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 import numpy as np
 import pandas as pd
