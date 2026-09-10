@@ -38,3 +38,6 @@ checkpoint_encodage.json
 tfidf_corpus.npz
 vocabulaire_tfidf.txt
 correspondance_tfidf.parquet
+
+# Rapports de detection generes (extraits du texte de tiers).
+rapport_detection_*.csv
