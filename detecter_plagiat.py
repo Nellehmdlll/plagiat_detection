@@ -100,13 +100,43 @@ def segmenter_document(chemin_pdf, compteur_taille):
     return chunks
 
 
+def charger_ressources():
+    """
+    Charge les artefacts du corpus de reference et les modeles necessaires a
+    detecter_plagiat(). Factorise hors de __main__ pour etre reutilisee par
+    une interface (chargement une seule fois, mis en cache) sans dupliquer
+    cette logique.
+    """
+    df_meta_corpus = pd.read_parquet(FICHIER_METADONNEES)
+    matrice_tfidf_corpus = sp.load_npz(FICHIER_MATRICE_TFIDF)
+    vecteurs_corpus = np.load(FICHIER_VECTEURS_CORPUS)
+
+    vectoriseur = TfidfVectorizer(
+        ngram_range=(1, 2), min_df=2, max_df=0.85, stop_words=sorted(MOTS_VIDES_FR), lowercase=True
+    )
+    vectoriseur.fit([pretraiter(t) for t in df_meta_corpus["texte"]])
+
+    modele = SentenceTransformer(NOM_MODELE_SEMANTIQUE, device="cuda")
+    modele.max_seq_length = FENETRE_REELLE
+
+    tokenizer = AutoTokenizer.from_pretrained(NOM_MODELE_SEMANTIQUE)
+    compteur_taille = compteur_taille_tokenizer(tokenizer)
+
+    return df_meta_corpus, matrice_tfidf_corpus, vecteurs_corpus, vectoriseur, modele, compteur_taille
+
+
 def detecter_plagiat(chemin_document_suspect, df_meta_corpus, matrice_tfidf_corpus,
                       vecteurs_corpus, vectoriseur, modele, compteur_taille,
-                      alpha=ALPHA, n_candidats=N_CANDIDATS):
+                      alpha=ALPHA, n_candidats=N_CANDIDATS, seuil=SEUIL_SIMILARITE):
     nom_suspect = os.path.basename(chemin_document_suspect)
     print(f"Segmentation de {nom_suspect}...")
     chunks_suspect = segmenter_document(chemin_document_suspect, compteur_taille)
     print(f"  {len(chunks_suspect)} chunks obtenus.")
+    if not chunks_suspect:
+        raise ValueError(
+            f"Aucune structure de sommaire detectee dans {nom_suspect} - "
+            f"impossible de segmenter ce document."
+        )
 
     masque_exclusion = (df_meta_corpus["document"] == nom_suspect).to_numpy()
     if masque_exclusion.any():
@@ -144,10 +174,12 @@ def detecter_plagiat(chemin_document_suspect, df_meta_corpus, matrice_tfidf_corp
 
         lignes_rapport.append({
             "chunk_suspect": chunk["chunk_id"],
+            "texte_suspect": chunk["texte"],
             "extrait_suspect": chunk["texte"][:150].replace("\n", " "),
             "legitime_suspect": bool(chunk["legitime"]) if chunk["legitime"] is not None else False,
             "document_candidat": candidat["document"],
             "section_candidat": candidat["chunk_id"],
+            "texte_candidat": candidat["texte"],
             "extrait_candidat": candidat["texte"][:150].replace("\n", " "),
             "legitime_candidat": bool(candidat["legitime"]) if candidat["legitime"] is not None else False,
             "score_fusionne": float(scores_fusionnes[meilleur_local]),
@@ -161,7 +193,7 @@ def detecter_plagiat(chemin_document_suspect, df_meta_corpus, matrice_tfidf_corp
 
     non_legitimes = df_rapport[~df_rapport["legitime_suspect"]]
     if len(non_legitimes) > 0:
-        taux_global = float((non_legitimes["score_fusionne"] > SEUIL_SIMILARITE).mean())
+        taux_global = float((non_legitimes["score_fusionne"] > seuil).mean())
     else:
         taux_global = None
 
@@ -169,26 +201,10 @@ def detecter_plagiat(chemin_document_suspect, df_meta_corpus, matrice_tfidf_corp
 
 
 if __name__ == "__main__":
-    print(f"Chargement des artefacts du corpus de reference...")
-    df_meta_corpus = pd.read_parquet(FICHIER_METADONNEES)
-    matrice_tfidf_corpus = sp.load_npz(FICHIER_MATRICE_TFIDF)
-    vecteurs_corpus = np.load(FICHIER_VECTEURS_CORPUS)
+    print(f"Chargement des ressources (corpus de reference + modeles)...")
+    df_meta_corpus, matrice_tfidf_corpus, vecteurs_corpus, vectoriseur, modele, compteur_taille = charger_ressources()
     print(f"  {len(df_meta_corpus)} chunks, matrice TF-IDF {matrice_tfidf_corpus.shape}, "
           f"vecteurs semantiques {vecteurs_corpus.shape}")
-
-    print(f"\nRefit du TF-IDF (memes parametres que construire_tfidf_corpus.py)...")
-    vectoriseur = TfidfVectorizer(
-        ngram_range=(1, 2), min_df=2, max_df=0.85, stop_words=sorted(MOTS_VIDES_FR), lowercase=True
-    )
-    vectoriseur.fit([pretraiter(t) for t in df_meta_corpus["texte"]])
-
-    print(f"\nChargement de {NOM_MODELE_SEMANTIQUE}...")
-    modele = SentenceTransformer(NOM_MODELE_SEMANTIQUE, device="cuda")
-    modele.max_seq_length = FENETRE_REELLE
-
-    print(f"\nChargement du tokenizer pour le compteur de taille (decoupage token-based)...")
-    tokenizer = AutoTokenizer.from_pretrained(NOM_MODELE_SEMANTIQUE)
-    compteur_taille = compteur_taille_tokenizer(tokenizer)
 
     # -------------------------------------------------------------------
     # TEST - SIMPORE comme document suspect (deja dans le corpus)

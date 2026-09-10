@@ -88,14 +88,36 @@ def obtenir_chunks_document(chemin_pdf, compteur_taille):
     return chunks
 
 
-def construire_chunks_corpus_complet(compteur_taille):
+def construire_chunks_corpus_complet(compteur_taille, rappel_progression=None):
+    """
+    rappel_progression, si fourni, est appele apres chaque document comme
+    rappel_progression(i, total, nom_document) - permet a un appelant (CLI,
+    interface) d'afficher une progression sans dupliquer cette fonction.
+
+    Chaque document est traite independamment : un document qui leve une
+    exception (PDF corrompu, etc.) est marque en echec et n'empeche pas le
+    traitement des autres ; un document sans sommaire detectable produit 0
+    chunk et est marque en limitation. statuts_documents renvoie le detail
+    par document pour affichage (statut, message, nombre de chunks).
+    """
     dossier = Path(CORPUS)
     fichiers_pdf = sorted(dossier.glob('**/*.pdf'))
 
     chunks_par_document = {}
-    for chemin_pdf in fichiers_pdf:
+    statuts_documents = {}
+    for i, chemin_pdf in enumerate(fichiers_pdf, 1):
         nom = chemin_pdf.name
-        chunks = obtenir_chunks_document(chemin_pdf, compteur_taille)
+        if rappel_progression:
+            rappel_progression(i, len(fichiers_pdf), nom)
+        try:
+            chunks = obtenir_chunks_document(chemin_pdf, compteur_taille)
+        except Exception as e:
+            chunks_par_document[nom] = []
+            statuts_documents[nom] = {
+                "statut": "echec", "detail": f"{type(e).__name__}: {e}", "nb_chunks": 0,
+            }
+            continue
+
         # cle_unique_section peut valoir None pour plusieurs sections
         # distinctes d'un meme document (aucun titre associe) : ce n'est
         # donc pas un identifiant fiable a lui seul. numero_chunk_dans_section
@@ -111,6 +133,15 @@ def construire_chunks_corpus_complet(compteur_taille):
             c["chunk_id"] = f"{nom}::section{compteur_section:03d}::{c['numero_chunk_dans_section']}"
         chunks_par_document[nom] = chunks
 
+        if not chunks:
+            statuts_documents[nom] = {
+                "statut": "limitation",
+                "detail": "Aucun sommaire/table des matieres detecte dans ce document.",
+                "nb_chunks": 0,
+            }
+        else:
+            statuts_documents[nom] = {"statut": "ok", "detail": None, "nb_chunks": len(chunks)}
+
     tous_chunks = [c for chunks in chunks_par_document.values() for c in chunks]
 
     # Verification d'unicite du chunk_id, condition necessaire pour que le
@@ -120,7 +151,7 @@ def construire_chunks_corpus_complet(compteur_taille):
     if doublons:
         raise ValueError(f"chunk_id non uniques detectes : {doublons}")
 
-    return chunks_par_document, tous_chunks
+    return chunks_par_document, tous_chunks, statuts_documents
 
 
 # -----------------------------------------------------------------------------
@@ -139,7 +170,7 @@ def sauvegarder_checkpoint(checkpoint):
         json.dump(checkpoint, f, ensure_ascii=False, indent=2)
 
 
-def encoder_corpus(chunks_par_document, tous_chunks, modele):
+def encoder_corpus(chunks_par_document, tous_chunks, modele, rappel_progression=None):
     n_total = len(tous_chunks)
     print(f"\nTotal de chunks a encoder : {n_total}")
 
@@ -177,6 +208,9 @@ def encoder_corpus(chunks_par_document, tous_chunks, modele):
         if nom_doc in checkpoint["documents_termines"]:
             n_deja_faits += len(chunks_doc)
             continue
+
+        if rappel_progression:
+            rappel_progression(i_doc, len(documents), nom_doc)
 
         textes = [c["texte"] for c in chunks_doc]
         vecs = modele.encode(
@@ -276,8 +310,15 @@ if __name__ == "__main__":
     print("Chargement du tokenizer et segmentation des 63 documents...")
     tokenizer = AutoTokenizer.from_pretrained(NOM_MODELE)
     compteur = compteur_taille_tokenizer(tokenizer)
-    chunks_par_document, tous_chunks = construire_chunks_corpus_complet(compteur)
+    chunks_par_document, tous_chunks, statuts_documents = construire_chunks_corpus_complet(compteur)
     print(f"{len(tous_chunks)} chunks au total sur {len(chunks_par_document)} documents.")
+    nb_echecs = sum(1 for s in statuts_documents.values() if s["statut"] == "echec")
+    nb_limitations = sum(1 for s in statuts_documents.values() if s["statut"] == "limitation")
+    if nb_echecs or nb_limitations:
+        print(f"  {nb_echecs} document(s) en echec, {nb_limitations} en limitation (voir details) :")
+        for nom, s in statuts_documents.items():
+            if s["statut"] != "ok":
+                print(f"    [{s['statut']}] {nom} : {s['detail']}")
 
     if not os.path.exists(FICHIER_METADONNEES):
         colonnes = ["chunk_id", "document", "cle_unique_section", "niveau", "legitime",

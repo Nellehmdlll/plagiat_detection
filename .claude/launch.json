@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app-detection",
+      "runtimeExecutable": ".venv-embed/Scripts/python.exe",
+      "runtimeArgs": ["-m", "streamlit", "run", "app_detection.py", "--server.headless", "true"],
+      "port": 8501
+    },
+    {
+      "name": "app-corpus",
+      "runtimeExecutable": ".venv-embed/Scripts/python.exe",
+      "runtimeArgs": ["-m", "streamlit", "run", "app_corpus.py", "--server.headless", "true", "--server.port", "8502"],
+      "port": 8502
+    }
+  ]
+}

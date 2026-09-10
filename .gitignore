@@ -50,3 +50,7 @@ sources_bc_a_paraphraser.parquet
 # grille_alpha_seuil.csv et courbe_precision_rappel.csv sont de purs
 # resultats numeriques agreges : versionnes normalement.
 scores_bruts_jeu_test.csv
+
+# Statuts de la derniere construction du corpus (app_corpus.py) :
+# reference les documents du corpus de tiers par nom.
+statuts_corpus.json

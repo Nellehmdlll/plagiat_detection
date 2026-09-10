@@ -143,18 +143,18 @@ def etape_sanite(vectoriseur):
     )
 
 
-if __name__ == "__main__":
-    print(f"Chargement de {FICHIER_METADONNEES}...")
-    df_meta = pd.read_parquet(FICHIER_METADONNEES)
-    print(f"{len(df_meta)} chunks charges (ordre = reference pour l'alignement avec "
-          f"vecteurs_corpus.npy).")
+def construire_index_tfidf(df_meta=None):
+    """
+    Construit et sauvegarde l'index TF-IDF (matrice, vocabulaire,
+    correspondance) a partir de metadonnees_corpus.parquet. Factorisee hors
+    de __main__ pour etre reutilisee (interface) sans dupliquer cette
+    logique. df_meta peut etre fourni deja charge (evite une relecture du
+    parquet quand l'appelant vient de le regenerer).
+    """
+    if df_meta is None:
+        df_meta = pd.read_parquet(FICHIER_METADONNEES)
 
-    diagnostiquer_pretraitement(df_meta["texte"].tolist())
     textes_pretraites = [pretraiter(t) for t in df_meta["texte"]]
-
-    print(f"\n{'=' * 90}\nVECTORISATION TF-IDF\n{'=' * 90}")
-    print(f"Parametres : ngram_range=(1,2), min_df=2, max_df=0.85, "
-          f"stop_words=francais ({len(MOTS_VIDES_FR)} mots, spaCy fr)")
 
     vectoriseur = TfidfVectorizer(
         ngram_range=(1, 2),
@@ -166,10 +166,6 @@ if __name__ == "__main__":
     matrice = vectoriseur.fit_transform(textes_pretraites)
     vocabulaire = vectoriseur.get_feature_names_out()
 
-    print(f"Matrice TF-IDF : {matrice.shape[0]} lignes x {matrice.shape[1]} colonnes "
-          f"(sparse, {matrice.nnz} valeurs non nulles, densite {matrice.nnz / (matrice.shape[0] * matrice.shape[1]):.4%})")
-
-    # --- Sauvegarde des sorties ---
     sp.save_npz(FICHIER_MATRICE, matrice)
     with open(FICHIER_VOCABULAIRE, "w", encoding="utf-8") as f:
         f.write("\n".join(vocabulaire))
@@ -179,6 +175,25 @@ if __name__ == "__main__":
     })
     df_correspondance.to_parquet(FICHIER_CORRESPONDANCE, index=False)
 
+    return vectoriseur, matrice, vocabulaire
+
+
+if __name__ == "__main__":
+    print(f"Chargement de {FICHIER_METADONNEES}...")
+    df_meta = pd.read_parquet(FICHIER_METADONNEES)
+    print(f"{len(df_meta)} chunks charges (ordre = reference pour l'alignement avec "
+          f"vecteurs_corpus.npy).")
+
+    diagnostiquer_pretraitement(df_meta["texte"].tolist())
+
+    print(f"\n{'=' * 90}\nVECTORISATION TF-IDF\n{'=' * 90}")
+    print(f"Parametres : ngram_range=(1,2), min_df=2, max_df=0.85, "
+          f"stop_words=francais ({len(MOTS_VIDES_FR)} mots, spaCy fr)")
+
+    vectoriseur, matrice, vocabulaire = construire_index_tfidf(df_meta)
+
+    print(f"Matrice TF-IDF : {matrice.shape[0]} lignes x {matrice.shape[1]} colonnes "
+          f"(sparse, {matrice.nnz} valeurs non nulles, densite {matrice.nnz / (matrice.shape[0] * matrice.shape[1]):.4%})")
     print(f"\nSauvegarde : {FICHIER_MATRICE}, {FICHIER_VOCABULAIRE}, {FICHIER_CORRESPONDANCE}")
 
     # -------------------------------------------------------------------

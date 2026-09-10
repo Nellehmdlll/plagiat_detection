@@ -43,14 +43,45 @@ MOTIF_NETTOYAGE = re.compile(
 )
 
 # Mots-clés de sections légitimes (non-contenu académique)
+#
+# Ajouts du 2026-09-10 (verifies chunk par chunk sur les 63 documents avant
+# application - voir l'echange de validation) :
+#   - variantes "STRUCTURE D'ACCUEIL" / "PRESENTATION DE ..." : couvrent la
+#     presentation de l'institution/entreprise d'accueil (tres frequente
+#     dans ce corpus - de nombreux stagiaires CITADEL la redigent
+#     independamment, cas typique de "reutilisation legitime" 3.5).
+#     Approche RETENUE plutot qu'une detection par mots-cles dans le corps
+#     du chunk : un test sur le contenu (avec ou sans filtre de position)
+#     produisait ~10-50% de faux positifs (contenu de fond mentionnant une
+#     institution en passant - ex. chapitre sur le systeme universitaire
+#     belge, "partenaire" au sens conjoint...). Rester sur le mecanisme
+#     TITRE existant, juste avec une liste elargie, evite ce risque.
+#   - "REMERCIME" (sans le "NT" final) et "ABBREVIATION"/"ABBRÉVIATION"
+#     (double B) : fautes d'orthographe reelles trouvees dans le corpus qui
+#     empechaient REMERCIEMENTS/LISTE DES ABREVIATIONS de matcher.
+# Les apostrophes typographiques (') du corpus sont normalisees en
+# apostrophes droites (') avant comparaison (voir normaliser_apostrophes) -
+# sans cela "d'accueil" ne matchait pas "d'accueil".
 MOTS_CLES_LEGITIMES = [
-    'REMERCIEMENTS', 'DEDICACE', 'DÉDICACE', 'RESUME', 'RÉSUMÉ',
+    'REMERCIEMENTS', 'REMERCIME', 'DEDICACE', 'DÉDICACE', 'RESUME', 'RÉSUMÉ',
     'ABSTRACT', 'SUMMARY', 'REFERENCES', 'RÉFÉRENCES', 'BIBLIOGRAPHIE',
     'ANNEXES', 'ANNEXE', 'LISTE DES TABLEAUX', 'LISTE DES FIGURES',
     'LISTE DES ANNEXES', 'LISTE DES SIGLES', 'LISTE DES ABREVIATIONS',
-    'LISTE DES ACRONYMES', 'TABLE DES MATIERES', 'TABLE DE MATIÈRES',
+    'LISTE DES ACRONYMES', 'ABBREVIATION', 'ABBRÉVIATION',
+    'TABLE DES MATIERES', 'TABLE DE MATIÈRES',
     'SOMMAIRE', 'AVANT-PROPOS', 'PREFACE',
+    "STRUCTURE D'ACCUEIL", "PRESENTATION DE LA STRUCTURE",
+    "PRÉSENTATION DE LA STRUCTURE", "PRESENTATION DE L'ENTREPRISE",
+    "PRÉSENTATION DE L'ENTREPRISE", "PRESENTATION DE L'INSTITUT",
+    "PRÉSENTATION DE L'INSTITUT",
 ]
+
+
+def normaliser_apostrophes(texte):
+    """Uniformise apostrophes typographiques (’, ʼ) et droites (') pour que
+    les mots-cles contenant une apostrophe matchent quelle que soit la
+    variante utilisee dans le document source."""
+    return texte.replace('’', "'").replace('ʼ', "'")
 
 # Titres de sections sans numéro qui ne doivent JAMAIS être rattachés
 # à un titre précédent (ce sont des sections autonomes)
@@ -358,7 +389,7 @@ def extraire_titres_sommaire(bloc_sommaire, debug=False):
             if debug:
                 print(f"  → Marqueur de fin de hiérarchie : contexte de chapitre réinitialisé")
 
-        texte_upper = texte_restant.upper()
+        texte_upper = normaliser_apostrophes(texte_restant.upper())
         est_legitime = any(
             mot_cle in texte_upper
             for mot_cle in MOTS_CLES_LEGITIMES
