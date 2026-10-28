@@ -44,7 +44,8 @@ import io
 import os
 import time
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):  # absent dans un notebook (Colab/Jupyter) - evite aussi le double-enveloppement a l'import
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import numpy as np
 import pandas as pd
@@ -60,7 +61,7 @@ from localiser_titres_corps import localiser_titres_dans_corps
 from decouper_segments import decouper_en_segments, compteur_taille_tokenizer
 from construire_tfidf_corpus import pretraiter, FICHIER_METADONNEES
 
-CORPUS = r"C:\Users\1\Documents\MASTER_SOUTENANCE\corpus"
+CORPUS = os.environ.get("CORPUS_DIR", r"C:\Users\1\Documents\MASTER_SOUTENANCE\corpus")
 NOM_MODELE_SEMANTIQUE = "dangvantuan/sentence-camembert-large"
 FENETRE_REELLE = 512
 TAILLE_MAX_CHUNK_TOKENS = 400
@@ -209,7 +210,7 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------
     # TEST - SIMPORE comme document suspect (deja dans le corpus)
     # -------------------------------------------------------------------
-    chemin_simpore = f"{CORPUS}\\SIMPORE Némata Version Finale.pdf"
+    chemin_simpore = os.path.join(CORPUS, "SIMPORE Némata Version Finale.pdf")
 
     print(f"\n{'=' * 100}\nDETECTION SUR SIMPORE (document deja dans le corpus de reference)\n{'=' * 100}")
     t0 = time.time()

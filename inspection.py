@@ -19,7 +19,7 @@ from pathlib import Path
 # CONFIGURATION
 # -----------------------------------------------------------------------------
 
-DOSSIER_CORPUS = r"C:\Users\1\Documents\MASTER_SOUTENANCE\corpus"
+DOSSIER_CORPUS = os.environ.get("CORPUS_DIR", r"C:\Users\1\Documents\MASTER_SOUTENANCE\corpus")
 FICHIER_SORTIE = "grille_observation_corpus.xlsx"
 
 # Motifs regex pour la détection des éléments structurels

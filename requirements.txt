@@ -1,0 +1,16 @@
+# torch n'est pas liste : sous Colab il est preinstalle ; en local (CUDA 12.4) :
+#   uv pip install torch --index-url https://download.pytorch.org/whl/cu124
+sentence-transformers
+transformers
+scikit-learn
+spacy
+scipy
+pyarrow
+rank-bm25
+sentencepiece
+protobuf
+pdfplumber
+pandas
+openpyxl
+numpy
+streamlit

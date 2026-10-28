@@ -38,7 +38,8 @@ import json
 import time
 from pathlib import Path
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):  # absent dans un notebook (Colab/Jupyter) - evite aussi le double-enveloppement a l'import
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import torch
 import numpy as np
@@ -51,7 +52,7 @@ from localiser_titres_corps import localiser_titres_dans_corps
 from decouper_segments import decouper_en_segments, compteur_taille_tokenizer
 from transformers import AutoTokenizer
 
-CORPUS = r"C:\Users\1\Documents\MASTER_SOUTENANCE\corpus"
+CORPUS = os.environ.get("CORPUS_DIR", r"C:\Users\1\Documents\MASTER_SOUTENANCE\corpus")
 NOM_MODELE = "dangvantuan/sentence-camembert-large"
 FENETRE_REELLE = 512
 TAILLE_MAX_CHUNK_TOKENS = 400

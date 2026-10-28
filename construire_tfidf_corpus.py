@@ -42,7 +42,8 @@ import io
 import re
 import unicodedata
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):  # absent dans un notebook (Colab/Jupyter) - evite aussi le double-enveloppement a l'import
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import numpy as np
 import pandas as pd
