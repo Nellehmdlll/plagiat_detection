@@ -250,8 +250,10 @@ def bootstrap_auc(y, scores, n_rep=2000, graine=0):
     return echantillons, auc
 
 
-def evaluer_fusion(y, sem, lex, categories, ids, decoupages):
-    configs = [(a, s) for a in VALEURS_ALPHA for s in VALEURS_SEUIL]
+def evaluer_fusion(y, sem, lex, categories, ids, decoupages, alphas=None, seuils=None):
+    alphas = VALEURS_ALPHA if alphas is None else alphas
+    seuils = VALEURS_SEUIL if seuils is None else seuils
+    configs = [(a, s) for a in alphas for s in seuils]
     P = np.stack([(a * sem + (1 - a) * lex) > s for a, s in configs])
     f1_tous = f1_sur_indices(P, y, np.arange(len(y)))
     k = int(np.argmax(f1_tous))

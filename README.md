@@ -427,8 +427,9 @@ maximale 48,6 %).
 ### Choix du modèle sémantique : comparatif élargi
 
 `comparer_modeles_supplementaires.py` compare `sentence-camembert-large`
-(retenu) à trois autres modèles, sur les mêmes 10 paires et les mêmes chunks
-que `comparer_modeles_definitif.py` (un modèle chargé à la fois,
+(retenu) à trois autres modèles, d'abord sur les mêmes 10 paires et les mêmes
+chunks que `comparer_modeles_definitif.py`, puis sur les 175 paires
+étiquetées (voir plus bas) (un modèle chargé à la fois,
 `max_seq_length = 512`, préfixe `query: ` pour E5, temps = médiane de 3
 passes) :
 
@@ -438,7 +439,7 @@ passes) :
 | Moyenne sans rapport | 0.2150 | 0.2899 | 0.8124 | 0.3191 |
 | **Écart** | **0.6434** | 0.6100 | 0.1576 | 0.5436 |
 | Paire 9 (ambiguë) | 0.1735 | 0.2801 | 0.8073 | 0.3012 |
-| Temps / 346 chunks (médiane) | 11.3 s | 4.1 s | 12.1 s | 4.3 s |
+| Temps / 346 chunks (médiane) | 11.7 s | 4.9 s | 12.8 s | 4.4 s |
 | VRAM pic | 1.61 Go | 1.33 Go | 2.47 Go | 0.69 Go |
 | Chunks tronqués (> 512 tokens) | 0 | 17 | 19 | 0 |
 
@@ -447,6 +448,39 @@ les départager) ; camembert-large a le plus grand écart. Les chunks sont déco
 avec le tokenizer de camembert, ce qui avantage les modèles camembert (aucun
 chunk tronqué) ; E5 concentre ses similarités entre 0,80 et 0,98 (seuils à
 recalibrer). Les temps sont indicatifs.
+
+**Évaluation sur les 175 paires étiquetées** (même script, même critère de décision
+que pour le signal lexical : F1 CV de la fusion avec TF-IDF, confirmé par l'AUC et
+le rappel ; mêmes plis de validation croisée 5 × 10 ; grille de seuil de 0,00 à
+1,00 par pas de 0,01, identique pour les quatre modèles car les échelles de
+cosinus diffèrent). Sortie : `comparatif_modeles_175_paires.csv`.
+
+| Modèle | AUC seul [IC 95 %] | F1 CV seul | rappel seul | F1 CV fusion avec TF-IDF (α) | rappel fusion | textes tronqués |
+|---|---|---|---|---|---|---|
+| camembert-large (retenu) | 0.9837 [0.960 ; 1.000] | 0.9736 | 0.9802 | 0.9757 ± 0.018 (0.10) | 1.0000 | 6 / 350 |
+| paraphrase-multilingual-mpnet-base-v2 | 0.9842 [0.965 ; 0.998] | 0.9628 | 0.9802 | 0.9736 ± 0.020 (0.10) | 1.0000 | 18 / 350 |
+| multilingual-e5-large | 0.9813 [0.956 ; 0.998] | 0.9694 | 1.0000 | **0.9762** ± 0.017 (0.25) | 1.0000 | 23 / 350 |
+| camembert-base | 0.9767 [0.949 ; 0.996] | 0.9504 | 0.9604 | **0.9762** ± 0.017 (0.15) | 1.0000 | 6 / 350 |
+
+Les quatre fusions atteignent le même F1 optimiste (0,9854) avec les mêmes trois
+faux positifs (paires 69, calib-7, calib-8) et aucun faux négatif. Différence
+d'AUC avec camembert-large (IC 95 %) : mpnet +0,0005 [−0,008 ; +0,011] et
+e5-large −0,0024 [−0,010 ; +0,004] (contiennent 0) ; camembert-base −0,0070
+[−0,014 ; −0,002] (ne contient pas 0).
+
+**Application de la règle** : les quatre modèles sont à moins d'un écart-type du
+meilleur F1 CV en fusion (écart maximal 0,0026), donc **non départageables sur ce
+jeu de test**. Seul camembert-base est écarté par le critère de confirmation (AUC
+seule significativement plus basse, F1 CV seul le plus faible). Ce jeu de test ne
+permet pas d'établir que camembert-large est meilleur que mpnet ou e5-large : la
+fusion donne un poids faible au sémantique (α de 0,10 à 0,25) car le lexical
+résout presque seul ce jeu. Le choix de camembert-large repose sur les 10 paires
+de paraphrases écrites à la main (plus grand écart, 0,6434 contre 0,6100 pour
+mpnet) et sur sa spécialisation pour le français, pas sur un avantage mesuré en
+F1 sur les 175 paires. Appliquée à la lettre, la règle « à égalité, le plus
+simple » favoriserait un modèle moins coûteux (mpnet ou camembert-base) ; mpnet
+tronque 18 textes sur 350 et n'est pas spécifique au français, camembert-base est
+écarté par l'AUC. Ce choix est donc assumé comme non démontré par les 175 paires.
 
 ### Autres scripts de calibration et d'évaluation
 

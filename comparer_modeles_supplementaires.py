@@ -50,8 +50,18 @@ from comparer_modeles_definitif import (
     CAMEMBERT_TEMPS_298, CAMEMBERT_VRAM_PIC_298, NB_CHUNKS_CORPUS_COMPLET, NOM_CAMEMBERT,
     etape1_verite_connue, obtenir_chunks_reference, selectionner_chunks_difficiles,
 )
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import RepeatedStratifiedKFold
+
+from comparer_lexical_recent import (
+    GRAINE, N_FOLDS, N_REPETITIONS, bootstrap_auc, evaluer_fusion, evaluer_signal_seul, scores_tfidf,
+)
 from construire_tfidf_corpus import FICHIER_METADONNEES
 from decouper_segments import compteur_taille_tokenizer
+from evaluer_jeu_test_complet import VALEURS_ALPHA, charger_jeu_complet
+
+FICHIER_SORTIE_175 = "comparatif_modeles_175_paires.csv"
+SEUILS_FUSION = [round(s, 2) for s in np.arange(0.0, 1.0001, 0.01)]
 
 LONGUEUR_MAX = 512
 FICHIER_SORTIE = "comparatif_modeles_supplementaires.csv"
@@ -113,6 +123,18 @@ if __name__ == "__main__":
     textes_tous = [c["texte"] for c in tous_chunks]
     print(f"  {len(tous_chunks)} chunks, dont {len(chunks_difficiles)} chunks a forte densite de citations")
 
+    df175 = charger_jeu_complet().reset_index(drop=True)
+    y175 = (df175["etiquette"] == "PLAGIAT").to_numpy()
+    categories175 = df175["categorie"].to_numpy()
+    ids175 = df175["id_paire"].astype(str).to_numpy()
+    textes175 = df175["texte_1"].tolist() + df175["texte_2"].tolist()
+    df_meta = pd.read_parquet(FICHIER_METADONNEES)
+    _, tfidf175 = scores_tfidf(df175, df_meta)
+    decoupages = list(RepeatedStratifiedKFold(
+        n_splits=N_FOLDS, n_repeats=N_REPETITIONS, random_state=GRAINE).split(np.zeros(len(y175)), y175))
+    scores175, tronques175 = {}, {}
+    print(f"  Jeu de test : {len(df175)} paires ({int(y175.sum())} PLAGIAT, {int((~y175).sum())} NON-PLAGIAT)")
+
     resultats = []
     for label, nom_hf, prefixe in MODELES:
         print(f"\n{'#' * 90}\nMODELE : {label} ({nom_hf})\n{'#' * 90}")
@@ -129,6 +151,10 @@ if __name__ == "__main__":
         r2 = etape2_normes(encodeur, chunks_difficiles)
         t, vram, durees = etape3_vitesse_vram(encodeur, textes_tous)
         tronques = chunks_tronques(modele.tokenizer, textes_tous, prefixe)
+        v1 = encodeur.encode(df175["texte_1"].tolist(), convert_to_numpy=True, show_progress_bar=False, batch_size=16)
+        v2 = encodeur.encode(df175["texte_2"].tolist(), convert_to_numpy=True, show_progress_bar=False, batch_size=16)
+        scores175[label] = (v1 * v2).sum(axis=1) / (np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1))
+        tronques175[label] = chunks_tronques(modele.tokenizer, textes175, prefixe)
         print(f"\n  Normes (zones difficiles) : min={r2['norme_min']:.4f}, max={r2['norme_max']:.4f}, "
               f"ecart-type={r2['norme_ecart_type']:.4f}, anomalies={r2['anomalies']}")
         print(f"  Vitesse : mediane {t:.1f}s pour {len(tous_chunks)} chunks ({t / len(tous_chunks) * 1000:.1f} ms/chunk) "
@@ -175,3 +201,77 @@ if __name__ == "__main__":
 
     pd.DataFrame(resultats).to_csv(FICHIER_SORTIE, index=False, encoding="utf-8-sig")
     print(f"\nSauvegarde : {FICHIER_SORTIE}")
+
+    # -------------------------------------------------------------------
+    # EVALUATION SUR LES 175 PAIRES ETIQUETEES (meme critere que le comparatif lexical)
+    # -------------------------------------------------------------------
+    print(f"\n{'#' * 120}\nEVALUATION SUR LES {len(df175)} PAIRES ETIQUETEES\n{'#' * 120}")
+    print("Critere de decision : F1 en validation croisee de la FUSION avec TF-IDF (c'est la configuration du "
+          "pipeline),\nconfirme par l'AUC et le rappel ; si un modele est a moins d'un ecart-type du meilleur "
+          "F1 CV, on garde le plus simple.")
+    print(f"Fusion : alpha x cosinus du modele + (1 - alpha) x cosinus TF-IDF ; grille alpha {VALEURS_ALPHA[0]} a "
+          f"{VALEURS_ALPHA[-1]} (pas 0.05) x seuil {SEUILS_FUSION[0]} a {SEUILS_FUSION[-1]} (pas 0.01), "
+          f"la meme pour les 4 modeles (les echelles de cosinus different : E5 est tres comprime).")
+    print(f"Validation croisee : {N_FOLDS} plis x {N_REPETITIONS} repetitions, graine {GRAINE}")
+
+    _, auc175 = bootstrap_auc(y175, scores175)
+    auc_ref = roc_auc_score(y175, scores175["sentence-camembert-large"])
+
+    print(f"\n{'=' * 120}\nA. SIGNAL SEMANTIQUE SEUL\n{'=' * 120}")
+    print(f"{'Modele':40s} {'AUC':>7s} {'IC 95% AUC':>20s} {'AP':>7s} {'F1 opt.':>8s} {'rappel':>7s} "
+          f"{'F1 CV':>14s} {'textes tronques':>16s}")
+    lignes175 = []
+    for label, s in scores175.items():
+        r = evaluer_signal_seul(y175, s, decoupages)
+        ic = f"[{np.percentile(auc175[label], 2.5):.4f} ; {np.percentile(auc175[label], 97.5):.4f}]"
+        print(f"{label:40s} {r['auc']:7.4f} {ic:>20s} {r['ap']:7.4f} {r['f1_optimiste']:8.4f} {r['rappel']:7.4f} "
+              f"{r['f1_cv']:7.4f}+-{r['f1_cv_ecart_type']:.3f} {tronques175[label]:>10d} / {len(textes175)}")
+        lignes175.append({"evaluation": "semantique_seul", "modele": label,
+                          "auc_ic_bas": float(np.percentile(auc175[label], 2.5)),
+                          "auc_ic_haut": float(np.percentile(auc175[label], 97.5)),
+                          "textes_tronques": tronques175[label], **r})
+
+    print(f"\n{'=' * 120}\nB. FUSION AVEC TF-IDF (configuration du pipeline)\n{'=' * 120}")
+    print(f"{'Modele':40s} {'alpha':>6s} {'seuil':>6s} {'F1 opt.':>8s} {'prec.':>7s} {'rappel':>7s} "
+          f"{'F1 CV':>14s}  {'VP/FP/VN/FN':>14s}")
+    fusions175 = {}
+    for label, s in scores175.items():
+        r = evaluer_fusion(y175, s, tfidf175, categories175, ids175, decoupages,
+                           alphas=VALEURS_ALPHA, seuils=SEUILS_FUSION)
+        fusions175[label] = r
+        print(f"{label:40s} {r['alpha']:6.2f} {r['seuil']:6.2f} {r['f1_optimiste']:8.4f} {r['precision']:7.4f} "
+              f"{r['rappel']:7.4f} {r['f1_cv']:7.4f}+-{r['f1_cv_ecart_type']:.3f}  "
+              f"{r['VP']:>3d}/{r['FP']:>2d}/{r['VN']:>3d}/{r['FN']:>2d}")
+        lignes175.append({"evaluation": "fusion_avec_tfidf", "modele": label, **r})
+
+    print(f"\nPaires mal classees au couple optimal de chaque fusion :")
+    for label, r in fusions175.items():
+        print(f"  {label:40s} faux positifs : {r['faux_positifs'] or '-'} | faux negatifs : {r['faux_negatifs'] or '-'}")
+    print(f"\nDetail par categorie (rappel A/B/C ; faux positifs D/E)")
+    print(f"{'Modele':40s} {'rappel A':>9s} {'rappel B':>9s} {'rappel C':>9s} {'FP D':>7s} {'FP E':>7s}")
+    for label, r in fusions175.items():
+        print(f"{label:40s} {r['rappel_A']:9.4f} {r['rappel_B']:9.4f} {r['rappel_C']:9.4f} "
+              f"{r['fp_D']:7.4f} {r['fp_E']:7.4f}")
+
+    print(f"\n{'=' * 120}\nC. DIFFERENCE D'AUC AVEC sentence-camembert-large (modele retenu), IC 95%\n{'=' * 120}")
+    for label, s in scores175.items():
+        if label == "sentence-camembert-large":
+            continue
+        d = auc175[label] - auc175["sentence-camembert-large"]
+        lo, hi = np.percentile(d, 2.5), np.percentile(d, 97.5)
+        print(f"  {label:40s} {roc_auc_score(y175, s) - auc_ref:+.4f} [{lo:+.4f} ; {hi:+.4f}] "
+              + ("contient 0" if lo <= 0 <= hi else "NE contient PAS 0"))
+
+    print(f"\n{'=' * 120}\nD. APPLICATION DE LA REGLE DE DECISION\n{'=' * 120}")
+    meilleur = max(fusions175, key=lambda m: fusions175[m]["f1_cv"])
+    f1_best, std_best = fusions175[meilleur]["f1_cv"], fusions175[meilleur]["f1_cv_ecart_type"]
+    print(f"Meilleur F1 CV en fusion : {meilleur} = {f1_best:.4f} (ecart-type {std_best:.4f})")
+    print(f"Modeles a moins d'un ecart-type du meilleur (F1 CV >= {f1_best - std_best:.4f}) :")
+    for label, r in fusions175.items():
+        ecart = f1_best - r["f1_cv"]
+        print(f"  {label:40s} F1 CV = {r['f1_cv']:.4f} (ecart au meilleur : {ecart:.4f}) -> "
+              + ("DANS un ecart-type" if ecart <= std_best else "hors ecart-type"))
+    print("Cout (pour departager a egalite) : voir la table de synthese ci-dessus (VRAM, temps, dimension).")
+
+    pd.DataFrame(lignes175).to_csv(FICHIER_SORTIE_175, index=False, encoding="utf-8-sig")
+    print(f"\nSauvegarde : {FICHIER_SORTIE_175}")
