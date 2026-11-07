@@ -21,7 +21,8 @@ import sys
 import io
 import time
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):  # evite le double-enveloppement quand ce module est importe
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import numpy as np
 import pandas as pd

@@ -36,7 +36,8 @@ import re
 import time
 from collections import Counter
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):  # evite le double-enveloppement quand ce module est importe
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import numpy as np
 import pandas as pd
@@ -106,7 +107,6 @@ PAIRE_1 = {
         "formant des cadres, du niveau intermédiaire au niveau supérieur, dans "
         "différents domaines d'activité."
     ),
-    "tfidf": 0.1000, "semantique": 0.7787,
 }
 PAIRE_3 = {
     "id": "3 (paraphrase)",
@@ -120,7 +120,6 @@ PAIRE_3 = {
         "expérience du milieu professionnel, tout en mettant en pratique la "
         "théorie apprise pendant leur cursus."
     ),
-    "tfidf": 0.1014, "semantique": 0.9013,
 }
 PAIRE_TERME_RARE = {
     "id": "terme rare partage",
@@ -129,21 +128,30 @@ PAIRE_TERME_RARE = {
         "Contrairement à d'autres établissements, l'IBAM a fait le choix d'une "
         "structure hiérarchico-fonctionnelle pour son organisation interne."
     ),
-    "tfidf": 0.6602, "semantique": None,
 }
 
 PAIRES = [PAIRE_1, PAIRE_3, PAIRE_TERME_RARE]
 
 
-def etape_tableau_comparatif(bm25):
-    print(f"\n{'=' * 100}\nTABLEAU COMPARATIF - TF-IDF (deja connu) / BM25 (nouveau) / Semantique (deja connu)\n{'=' * 100}")
+def cosinus_tfidf(vectoriseur, texte_a, texte_b):
+    v_a = vectoriseur.transform([pretraiter(texte_a)])
+    v_b = vectoriseur.transform([pretraiter(texte_b)])
+    num = v_a.multiply(v_b).sum()
+    den = np.sqrt(v_a.multiply(v_a).sum()) * np.sqrt(v_b.multiply(v_b).sum())
+    return float(num / den) if den > 0 else 0.0
+
+
+def etape_tableau_comparatif(bm25, vectoriseur, modele):
+    """TF-IDF (cosinus), BM25 (A->B et B->A) et semantique (cosinus camembert), tous recalcules ici."""
+    print(f"\n{'=' * 100}\nTABLEAU COMPARATIF - TF-IDF / BM25 / Semantique (tous recalcules par ce script)\n{'=' * 100}")
     print(f"{'Paire':30s} {'TF-IDF':>10s} {'BM25 (A->B)':>13s} {'BM25 (B->A)':>13s} {'Semantique':>12s}")
     for p in PAIRES:
         score_ab = score_bm25_paire(bm25, p["a"], p["b"])
         score_ba = score_bm25_paire(bm25, p["b"], p["a"])
-        sem = f"{p['semantique']:.4f}" if p["semantique"] is not None else "n/a"
-        tfidf = f"{p['tfidf']:.4f}" if p["tfidf"] is not None else "n/a"
-        print(f"{p['id']:30s} {tfidf:>10s} {score_ab:>13.4f} {score_ba:>13.4f} {sem:>12s}")
+        vec = modele.encode([p["a"], p["b"]], convert_to_numpy=True, show_progress_bar=False)
+        sem = float(np.dot(vec[0], vec[1]) / (np.linalg.norm(vec[0]) * np.linalg.norm(vec[1])))
+        tfidf = cosinus_tfidf(vectoriseur, p["a"], p["b"])
+        print(f"{p['id']:30s} {tfidf:>10.4f} {score_ab:>13.4f} {score_ba:>13.4f} {sem:>12.4f}")
     print(
         "\nNote lecture : le score BM25 n'est pas borne a [0,1] comme un cosinus (c'est un "
         "score de pertinence, pas une similarite normalisee) - seul l'ORDRE RELATIF entre "
@@ -155,7 +163,7 @@ def etape_tableau_comparatif(bm25):
     return None
 
 
-def etape_cas_longueur_differente(df_meta, bm25):
+def etape_cas_longueur_differente(df_meta, bm25, vectoriseur):
     print(f"\n{'=' * 100}\nCAS 4 - deux chunks reels partageant un terme rare, longueurs tres differentes\n{'=' * 100}")
 
     print("Recherche d'un terme rare (present dans 2 a 4 chunks du corpus) associe a "
@@ -204,18 +212,7 @@ def etape_cas_longueur_differente(df_meta, bm25):
     score_court_vers_long = score_bm25_paire(bm25, c_court["texte"], c_long["texte"])
     score_long_vers_court = score_bm25_paire(bm25, c_long["texte"], c_court["texte"])
 
-    # Comparaison TF-IDF (cosinus) sur la meme paire, en reconstruisant un
-    # petit vectoriseur equivalent pour rester autonome de ce script.
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    vectoriseur_local = TfidfVectorizer(
-        ngram_range=(1, 2), min_df=2, max_df=0.85, stop_words=sorted(MOTS_VIDES_FR), lowercase=True
-    )
-    matrice_corpus = vectoriseur_local.fit_transform([pretraiter(t) for t in df_meta["texte"]])
-    v_court = matrice_corpus.getrow(i_court)
-    v_long = matrice_corpus.getrow(i_long)
-    num = v_court.multiply(v_long).sum()
-    den = np.sqrt(v_court.multiply(v_court).sum()) * np.sqrt(v_long.multiply(v_long).sum())
-    cos_tfidf = float(num / den) if den > 0 else 0.0
+    cos_tfidf = cosinus_tfidf(vectoriseur, c_court["texte"], c_long["texte"])
 
     print(f"\n  TF-IDF cosinus (court, long)            : {cos_tfidf:.4f}")
     print(f"  BM25 (requete=court, document=long)     : {score_court_vers_long:.4f}")
@@ -285,5 +282,15 @@ if __name__ == "__main__":
         "si on scorait une requete contre le corpus entier via get_scores()."
     )
 
-    etape_tableau_comparatif(bm25)
-    etape_cas_longueur_differente(df_meta, bm25)
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sentence_transformers import SentenceTransformer
+
+    vectoriseur = TfidfVectorizer(
+        ngram_range=(1, 2), min_df=2, max_df=0.85, stop_words=sorted(MOTS_VIDES_FR), lowercase=True
+    )
+    vectoriseur.fit([pretraiter(t) for t in df_meta["texte"]])
+    modele = SentenceTransformer("dangvantuan/sentence-camembert-large", device="cuda")
+    modele.max_seq_length = 512
+
+    etape_tableau_comparatif(bm25, vectoriseur, modele)
+    etape_cas_longueur_differente(df_meta, bm25, vectoriseur)

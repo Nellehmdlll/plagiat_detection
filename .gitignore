@@ -54,3 +54,7 @@ scores_bruts_jeu_test.csv
 # Statuts de la derniere construction du corpus (app_corpus.py) :
 # reference les documents du corpus de tiers par nom.
 statuts_corpus.json
+
+# Sauvegardes d'index (texte de tiers) et documents ecartes du corpus.
+sauvegarde_index*/
+corpus_doublons/

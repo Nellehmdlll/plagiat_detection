@@ -308,7 +308,7 @@ def verifier(tous_chunks, t_total, vram_pic, n_encodes_cette_session, tokenizer)
 
 
 if __name__ == "__main__":
-    print("Chargement du tokenizer et segmentation des 63 documents...")
+    print(f"Chargement du tokenizer et segmentation des documents de {CORPUS}...")
     tokenizer = AutoTokenizer.from_pretrained(NOM_MODELE)
     compteur = compteur_taille_tokenizer(tokenizer)
     chunks_par_document, tous_chunks, statuts_documents = construire_chunks_corpus_complet(compteur)

@@ -28,7 +28,8 @@ import re
 import time
 import pickle
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):  # evite le double-enveloppement quand ce module est importe
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import torch
 import numpy as np
